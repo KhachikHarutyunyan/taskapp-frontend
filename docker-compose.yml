@@ -1,0 +1,33 @@
+
+services:
+
+  nginx:
+    image: task_app_ui
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    container_name: task_app_ui
+    ports:
+      - "9021:8080"
+    networks:
+      - taskapp
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+        reservations:
+          cpus: "0.10"
+          memory: 64M
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  taskapp:
