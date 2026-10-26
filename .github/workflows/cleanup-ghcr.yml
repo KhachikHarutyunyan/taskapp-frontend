@@ -19,5 +19,5 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           image-names: task-frontend
           tag-selection: untagged
-          cut-off: 7d
+          cut-off: 1d
           dry-run: true
