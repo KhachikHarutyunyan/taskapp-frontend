@@ -30,6 +30,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITOPS_PAT }}
+
       # Auth in GHCR with GITHUB_TOKEN
       - name: Build and push Docker image
         if: github.event_name == 'push'
