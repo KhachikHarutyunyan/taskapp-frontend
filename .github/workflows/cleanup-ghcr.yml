@@ -20,4 +20,4 @@ jobs:
           image-names: task-frontend
           tag-selection: untagged
           cut-off: 1d
-          dry-run: true
+          # dry-run: true
