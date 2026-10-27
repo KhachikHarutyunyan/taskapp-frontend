@@ -13,11 +13,13 @@ jobs:
       packages: write
     steps:
       - name: Delete untagged images, keep last 2 tagged
-        uses: snok/container-retention-policy@v3.1.0
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        # uses: snok/container-retention-policy@v3.1.0
         with:
-          account: user
           token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: task-frontend
-          tag-selection: untagged
-          cut-off: 1d
+          delete-untaged: true
+          # account: user
+          # image-names: task-frontend
+          # tag-selection: untagged
+          # cut-off: 1d
           # dry-run: true
