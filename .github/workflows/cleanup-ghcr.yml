@@ -18,15 +18,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           owner: ${{ github.repository_owner }}
           package: "task-frontend"
-          # ✅ Удаляем именно ТЕГИРОВАННЫЕ образы
-          delete-tags: true
-          # Регекс: SHA-подобные теги (40 символов hex)
-          tags: "^[0-9a-f]{40}$"
-          # НЕ трогаем latest и buildcache
-          exclude-tags: "^latest$|^buildcache$"
-          # Храним 2 последних SHA-образа
           keep-n-tagged: 2
-          dry-run: true
+          exclude-tags: "latest,buildcache"
       # - name: Delete untagged images, keep last 2 tagged
       #   uses: dataaxiom/ghcr-cleanup-action@v1
       #   # uses: snok/container-retention-policy@v3.1.0
