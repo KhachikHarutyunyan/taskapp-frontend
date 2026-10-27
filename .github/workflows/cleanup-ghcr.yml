@@ -2,8 +2,7 @@ name: Cleanup GHCR untagged images
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
-    # - cron: '0 3 * * 0'
+    - cron: '0 3 * * 0'
   workflow_dispatch: {}
 
 jobs:
@@ -20,17 +19,3 @@ jobs:
           package: "task-frontend"
           keep-n-tagged: 2
           exclude-tags: "latest,buildcache"
-      # - name: Delete untagged images, keep last 2 tagged
-      #   uses: dataaxiom/ghcr-cleanup-action@v1
-      #   # uses: snok/container-retention-policy@v3.1.0
-      #   with:
-      #     token: ${{ secrets.GITHUB_TOKEN }}
-      #     delete-untagged: true
-      #     owner: ${{ github.repository_owner }}
-      #     package: "task-frontend" 
-      #     delete-orphaned-images: true 
-          # account: user
-          # image-names: task-frontend
-          # tag-selection: untagged
-          # cut-off: 1d
-          # dry-run: true
