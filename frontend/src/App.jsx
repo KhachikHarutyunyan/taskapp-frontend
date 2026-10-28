@@ -19,7 +19,7 @@ function App() {
       {/* ======= HEADER ======= */}
       <header className="flex justify-between items-center p-4 border-bshadow-sm">
         <h1 className="text-xl font-semibold text-teal-800">
-          TasksAPP Managment
+          Tasks Managment
         </h1>
 
         {user && (
