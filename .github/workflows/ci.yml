@@ -80,7 +80,7 @@ jobs:
 
       # Checkout GitOps-repository (only if push)
       - name: Checkout GitOps repository
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.GITOPS_REPO }}
@@ -90,14 +90,14 @@ jobs:
 
       # Install yq
       - name: Install yq
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         run: |
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
       # Update tag in values-file
       - name: Update image tag in GitOps values
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request'
         run: |
           cd gitops-repo
           VALUES_FILE="environments/${{ env.TARGET_ENV }}/frontend-values.yaml"
@@ -113,7 +113,7 @@ jobs:
 
       # Commit and push to GitOps-repository
       - name: Commit and push changes
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request'
         run: |
           cd gitops-repo
           git config user.name "github-actions[bot]"
