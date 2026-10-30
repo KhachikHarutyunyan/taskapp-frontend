@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import api from "@/api/client";
 import { AuthService } from "@/api/AuthService";
@@ -10,7 +10,10 @@ export const AuthContext = createContext();
 
 export function AuthProvider({ children }) {
     const navigate = useNavigate();
+    const location = useLocation();
     const queryClient = useQueryClient();
+    const locationRef = useRef(location);
+    locationRef.current = location;
 
     const [token, setToken] = useState(() => {
         const t = authStore.getToken();
@@ -19,6 +22,20 @@ export function AuthProvider({ children }) {
         }
         return t;
     });
+
+    const clearSession = useCallback(() => {
+        authStore.setToken(null);
+        delete api.defaults.headers.common["Authorization"];
+        queryClient.clear();
+
+        const path = locationRef.current.pathname;
+        if (path !== "/login" && path !== "/register") {
+            navigate("/login", { replace: true });
+        }
+    }, [navigate, queryClient]);
+
+    const clearSessionRef = useRef(clearSession);
+    clearSessionRef.current = clearSession;
 
     useEffect(() => {
         const unsubscribe = authStore.subscribe((newToken) => {
@@ -32,10 +49,10 @@ export function AuthProvider({ children }) {
         return unsubscribe;
     }, []);
 
-    // In Refresh Fail Logout user
+    // Refresh failed, or the access token was rejected and could not be renewed.
     useEffect(() => {
         const handleForceLogout = () => {
-            logoutWithoutClearingToken();
+            clearSessionRef.current();
         };
         window.addEventListener("auth:force-logout", handleForceLogout);
         return () => window.removeEventListener("auth:force-logout", handleForceLogout);
@@ -46,7 +63,17 @@ export function AuthProvider({ children }) {
         data: user,
         isLoading,
         isError,
+        error,
     } = useMe(!!token);
+
+    const isUnauthorized = Boolean(
+        token && isError && error?.response?.status === 401
+    );
+
+    useEffect(() => {
+        if (!isUnauthorized) return;
+        clearSession();
+    }, [isUnauthorized, clearSession]);
 
     // LOGIN
     const login = async (email, password) => {
@@ -66,22 +93,19 @@ export function AuthProvider({ children }) {
     const logout = useCallback(async () => {
         try {
             await AuthService.logout();
-        } catch { }
-        logoutWithoutClearingToken();
-    }, []);
-
-    const logoutWithoutClearingToken = useCallback(() => {
-        authStore.setToken(null);
-        queryClient.clear();
-        navigate("/login", { replace: true });
-    }, [navigate, queryClient]);
+        } catch {
+            // Session is already invalid; local state is cleared below.
+        }
+        clearSession();
+    }, [clearSession]);
 
     return (
         <AuthContext.Provider
             value={{
                 user,
                 token,
-                isLoading,
+                isLoading: Boolean(isLoading && !isUnauthorized),
+                isUnauthorized,
                 login,
                 logout,
                 register,

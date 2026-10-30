@@ -11,6 +11,20 @@ import PublicRoute from './components/Reusable/PublicRoute'
 import Tasks from './components/Tasks'
 
 
+function RootRedirect() {
+  const { token, isLoading, isUnauthorized } = useAuth();
+
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
+
+  if (!token || isUnauthorized) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <Navigate to="/tasks" replace />;
+}
+
 function App() {
   const { user, logout } = useAuth();
   
@@ -37,6 +51,8 @@ function App() {
       {/* ======= CONTENT ======= */}
       <main className="flex-1">
         <Routes>
+          <Route path="/" element={<RootRedirect />} />
+
           <Route element={<PublicRoute />}>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<SignupPage />} />

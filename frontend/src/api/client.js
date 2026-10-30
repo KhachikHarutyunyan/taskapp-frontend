@@ -27,6 +27,17 @@ const processQueue = (error, newToken = null) => {
   queue = [];
 };
 
+const forceLogout = () => {
+  authStore.setToken(null);
+  delete api.defaults.headers.common["Authorization"];
+  window.dispatchEvent(new CustomEvent("auth:force-logout"));
+};
+
+const isAuthEndpoint = (url = "") =>
+  url.includes("/auth/login") ||
+  url.includes("/auth/register") ||
+  url.includes("/auth/refresh_token");
+
 // =====================
 // INTERCEPTOR
 // =====================
@@ -35,61 +46,65 @@ api.interceptors.response.use(
   async (error) => {
     const original = error.config;
 
-    if (!error.response) {
+    if (!error.response || !original) {
       return Promise.reject(error);
     }
 
-    // Dont send to auth endpoints (instead /auth/me)
-    if (
-      original.url?.includes("/auth/login") ||
-      original.url?.includes("/auth/register") ||
-      original.url?.includes("/auth/refresh_token")
-    ) {
+    const url = String(original.url || "");
+
+    // Login/register errors stay on the form. Refresh failures are handled
+    // by the request that started the refresh, so they must not refresh again.
+    if (original._skipAuthRefresh || isAuthEndpoint(url)) {
       return Promise.reject(error);
     }
 
-    // If status 401 try update token
-    if (error.response.status === 401 && !original._retry) {
+    if (error.response.status !== 401) {
+      return Promise.reject(error);
+    }
 
-      original._retry = true;
+    // Access token is already gone, or this request was already retried.
+    if (!authStore.getToken() || original._retry) {
+      forceLogout();
+      return Promise.reject(error);
+    }
 
-      if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          queue.push({ resolve, reject });
-        }).then((newToken) => {
-          original.headers.Authorization = `Bearer ${newToken}`;
-          return api(original);
-        });
-      }
+    original._retry = true;
 
-      isRefreshing = true;
-
-      try {
-        const { data } = await api.post("/auth/refresh_token");
-        const newToken = data.access_token;
-
-        authStore.setToken(newToken);
-        api.defaults.headers.common["Authorization"] = `Bearer ${newToken}`;
-
-        processQueue(null, newToken);
-
+    if (isRefreshing) {
+      return new Promise((resolve, reject) => {
+        queue.push({ resolve, reject });
+      }).then((newToken) => {
         original.headers.Authorization = `Bearer ${newToken}`;
         return api(original);
-      } catch (err) {
-        processQueue(err, null);
-
-        authStore.setToken(null);
-        delete api.defaults.headers.common["Authorization"];
-
-        window.dispatchEvent(new CustomEvent("auth:force-logout"));
-
-        return Promise.reject(err);
-      } finally {
-        isRefreshing = false;
-      }
+      });
     }
 
-    return Promise.reject(error);
+    isRefreshing = true;
+
+    try {
+      const { data } = await api.post("/auth/refresh_token", null, {
+        _skipAuthRefresh: true,
+      });
+      const newToken = data?.access_token;
+
+      if (!newToken) {
+        throw new Error("Refresh did not return an access token");
+      }
+
+      authStore.setToken(newToken);
+      api.defaults.headers.common["Authorization"] = `Bearer ${newToken}`;
+
+      processQueue(null, newToken);
+
+      original.headers.Authorization = `Bearer ${newToken}`;
+      return api(original);
+    } catch (err) {
+      processQueue(err, null);
+      forceLogout();
+      return Promise.reject(err);
+    } finally {
+      isRefreshing = false;
+    }
   }
 );
 
