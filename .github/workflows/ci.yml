@@ -1,4 +1,4 @@
-name: CI - Build and Push Frontend Image
+name: CI - Build, Test & Security Scan Frontend
 
 on:
   push:
@@ -13,9 +13,6 @@ on:
         required: true
         default: "stage"
         type: environment
-        oprions:
-          - stage
-          - prod
       image_tag:
         description: "Docker image tag (SHA) to deploy"
         required: true
@@ -24,94 +21,237 @@ env:
   REGISTRY: ghcr.io
   GITOPS_REPO: KhachikHarutyunyan/taskapp
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
-  build-and-push:
+  # ==========================================
+  # Testing
+  # ==========================================
+  test:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Run Linter
+        run: npm run lint
+        working-directory: frontend
+
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: frontend
+
+      - name: Build
+        run: npm run build
+        working-directory: frontend
+
+  # ==========================================
+  # Security (SAST, SCA, Secrets, Dockerfile)
+  # ==========================================
+  security:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        run: |
+          curl -sSL -o /tmp/gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tar.gz" | sha256sum -c
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --redact --verbose
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Run ESLint Security Report
+        run: npx eslint --format json --output-file eslint-security.json .
+        working-directory: frontend
+        continue-on-error: true
+
+      - name: Run npm audit (SCA)
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: frontend
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: nginx/Dockerfile
+          failure-threshold: warning
+
+  # ==========================================
+  # Build, Scan Image, Push and DAST
+  # ==========================================
+  build-scan-push:
+    needs: [test, security]
+    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped') && (needs.security.result == 'success' || needs.security.result == 'skipped')
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
-    # Important to push in GHCR with GITHUB_TOKEN
     permissions:
       contents: read
       packages: write
+      security-events: write
+      actions: write
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set lowercase image name
         run: |
-          echo "IMAGE_NAME=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/task-frontend" >> $GITHUB_ENV
+          echo "IMAGE_NAME=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/task-frontend" >> "$GITHUB_ENV"
 
       - name: Set deployment variables
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_ENV: ${{ github.event.inputs.environment }}
+          INPUT_TAG: ${{ github.event.inputs.image_tag }}
+          SHA: ${{ github.sha }}
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "TARGET_ENV=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
-            echo "TARGET_TAG=${{ github.event.inputs.image_tag }}" >> $GITHUB_ENV
-            echo "DO_BUILD=false" >> $GITHUB_ENV
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "TARGET_ENV=${INPUT_ENV}" >> "$GITHUB_ENV"
+            echo "TARGET_TAG=${INPUT_TAG}" >> "$GITHUB_ENV"
+            echo "DO_BUILD=false" >> "$GITHUB_ENV"
           else
-            echo "TARGET_ENV=dev" >> $GITHUB_ENV
-            echo "TARGET_TAG=${{ github.sha }}" >> $GITHUB_ENV
-            echo "DO_BUILD=true" >> $GITHUB_ENV
+            echo "TARGET_ENV=dev" >> "$GITHUB_ENV"
+            echo "TARGET_TAG=${SHA}" >> "$GITHUB_ENV"
+            echo "DO_BUILD=true" >> "$GITHUB_ENV"
           fi
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        if: env.DO_BUILD == 'true' && github.event_name == 'push'
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Auth in GHCR with GITHUB_TOKEN
-      # Builds only if push DO_BUILD=true
-      - name: Build and push Docker image
+      - name: Build Docker image (Load to local)
         if: env.DO_BUILD == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./nginx/Dockerfile
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          platforms: linux/amd64
+          load: true
+          provenance: false
+          sbom: false
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TARGET_TAG }}
+          cache-from: ${{ github.event_name == 'push' && format('type=registry,ref={0}/{1}:buildcache', env.REGISTRY, env.IMAGE_NAME) || '' }}
+          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}/{1}:buildcache,mode=max', env.REGISTRY, env.IMAGE_NAME) || '' }}
 
-      # Checkout GitOps-repository (only if push)
+      - name: Install Trivy
+        if: env.DO_BUILD == 'true'
+        uses: aquasecurity/setup-trivy@v0.3.1
+
+      - name: Run Trivy vulnerability scanner
+        if: env.DO_BUILD == 'true'
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --ignore-unfixed \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TARGET_TAG }}
+
+      - name: Upload Trivy SARIF
+        if: always() && env.DO_BUILD == 'true'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Start frontend container
+        if: env.DO_BUILD == 'true'
+        run: |
+          docker run -d --name frontend -p 8080:8080 \
+            "${REGISTRY}/${IMAGE_NAME}:${TARGET_TAG}"
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8080/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs frontend
+          exit 1
+
+      - name: Run OWASP ZAP Baseline Scan
+        if: env.DO_BUILD == 'true'
+        uses: zaproxy/action-baseline@v0.15.0
+        with:
+          target: http://127.0.0.1:8080
+          allow_issue_writing: false
+          fail_action: false
+
+      - name: Push Docker image
+        if: env.DO_BUILD == 'true' && github.event_name == 'push'
+        run: |
+          docker push "${REGISTRY}/${IMAGE_NAME}:${TARGET_TAG}"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            docker tag "${REGISTRY}/${IMAGE_NAME}:${TARGET_TAG}" "${REGISTRY}/${IMAGE_NAME}:latest"
+            docker push "${REGISTRY}/${IMAGE_NAME}:latest"
+          fi
+
+      # ==========================================
+      # Update GitOps repository
+      # ==========================================
       - name: Checkout GitOps repository
         if: github.event_name != 'pull_request'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ env.GITOPS_REPO }}
-          token: ${{ secrets.GHCR_PAT }}   # PAT with permission to write in taskapp
+          token: ${{ secrets.GHCR_PAT }}
           path: gitops-repo
           ref: main
 
-      # Install yq
       - name: Install yq
         if: github.event_name != 'pull_request'
         run: |
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
 
-      # Update tag in values-file
       - name: Update image tag in GitOps values
         if: github.event_name != 'pull_request'
         run: |
           cd gitops-repo
-          VALUES_FILE="environments/${{ env.TARGET_ENV }}/frontend-values.yaml"
+          VALUES_FILE="environments/${TARGET_ENV}/frontend-values.yaml"
 
-          # Check file exists
           if [ ! -f "$VALUES_FILE" ]; then
             echo "Error: $VALUES_FILE not found!"
             exit 1
           fi
 
-          yq eval ".image.tag = \"${{ env.TARGET_TAG }}\"" -i "$VALUES_FILE"
-          echo "Updated image tag to ${{ env.TARGET_TAG }} in $VALUES_FILE"
+          yq eval ".image.tag = \"${TARGET_TAG}\"" -i "$VALUES_FILE"
+          echo "Updated image tag to ${TARGET_TAG} in $VALUES_FILE"
 
-      # Commit and push to GitOps-repository
       - name: Commit and push changes
         if: github.event_name != 'pull_request'
         run: |
@@ -119,12 +259,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          VALUES_FILE="environments/${{ env.TARGET_ENV }}/frontend-values.yaml"
+          VALUES_FILE="environments/${TARGET_ENV}/frontend-values.yaml"
           git add "$VALUES_FILE"
-          
+
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "ci(${{ env.TARGET_ENV }}): deploy frontend ${{ env.TARGET_TAG }} [skip ci]"
+            git commit -m "ci(${TARGET_ENV}): deploy frontend ${TARGET_TAG} [skip ci]"
             git push origin main
           fi
