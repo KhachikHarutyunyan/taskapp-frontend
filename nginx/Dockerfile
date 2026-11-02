@@ -8,11 +8,14 @@ COPY frontend/ .
 RUN npm run build
 
 # Stage 2: Nginx with frontend
-FROM nginxinc/nginx-unprivileged:1.25-alpine
+FROM nginxinc/nginx-unprivileged:1.30.6-alpine3.24
 
 USER root
-# hadolint ignore=DL3018
-RUN apk add --no-cache gettext \
+RUN apk add --no-cache \
+      gettext=1.0-r0 \
+      brotli-libs=1.2.1-r0 \
+      curl=8.23.0-r0 \
+      libcurl=8.23.0-r0 \
     && rm -f /etc/nginx/conf.d/default.conf
 
 COPY --from=frontend-builder /app/dist /usr/share/nginx/html

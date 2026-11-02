@@ -175,13 +175,19 @@ jobs:
       - name: Run Trivy vulnerability scanner
         if: env.DO_BUILD == 'true'
         run: |
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:${TARGET_TAG}"
           trivy image \
             --format sarif \
             --output trivy-results.sarif \
             --severity CRITICAL,HIGH \
-            --exit-code 1 \
             --ignore-unfixed \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TARGET_TAG }}
+            --exit-code 0 \
+            "$IMAGE"
+          trivy image \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --exit-code 1 \
+            "$IMAGE"
 
       - name: Upload Trivy SARIF
         if: always() && env.DO_BUILD == 'true'
