@@ -20,6 +20,7 @@ RUN apk add --no-cache \
 
 COPY --from=frontend-builder /app/dist /usr/share/nginx/html
 COPY nginx/nginx-prod.conf /etc/nginx/conf.d/
+COPY nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY nginx/docker-entrypoint.sh /docker-entrypoint.d/40-runtime-env.sh
 
 RUN chmod +x /docker-entrypoint.d/40-runtime-env.sh \
